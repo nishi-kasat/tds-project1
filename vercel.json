@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "functions": {
+    "api/endpoint.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "routes": [
+    { "src": "/api-endpoint", "dest": "/api/endpoint.js" }
+  ]
+}
