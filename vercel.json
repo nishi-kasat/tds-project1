@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/endpoint.js": {
-      "runtime": "nodejs18.x"
+      "runtime": "@vercel/node@latest"
     }
   },
   "routes": [
