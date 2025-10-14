@@ -1,11 +1,10 @@
 {
-  "name": "llm-code-deployment",
+  "name": "tds-project1",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": "18.x" },
   "scripts": {
-    "build": "echo 'no build step needed'",
+    "vercel-build": "echo 'Skipping build, using npm runtime'",
     "start": "vercel dev"
   }
 }
