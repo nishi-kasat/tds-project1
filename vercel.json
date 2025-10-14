@@ -2,10 +2,13 @@
   "version": 2,
   "functions": {
     "api/endpoint.js": {
-      "runtime": "@vercel/node@latest"
+      "runtime": "@vercel/node@3.0.0"
     }
   },
   "routes": [
-    { "src": "/api-endpoint", "dest": "/api/endpoint.js" }
+    {
+      "src": "/api-endpoint",
+      "dest": "/api/endpoint.js"
+    }
   ]
 }
