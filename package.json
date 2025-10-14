@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "vercel-build": "echo 'Skipping build, using npm runtime'",
+    "vercel-build": "echo 'No build step needed'",
     "start": "vercel dev"
   }
 }
