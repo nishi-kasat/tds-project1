@@ -6,17 +6,11 @@ export default async function handler(req, res) {
 
   try {
     const body = await readJson(req);
-
-    // 1️⃣ Verify secret
     if (!body.secret || body.secret !== process.env.STUDENT_SECRET) {
       res.status(401).json({ error: "Invalid secret" });
       return;
     }
-
-    // 2️⃣ Acknowledge immediately (HTTP 200 per spec)
     res.status(200).json({ status: "ok" });
-
-    // 3️⃣ Continue async (build and deploy)
     await processRequest(body);
   } catch (err) {
     console.error("Error handling request:", err);
@@ -24,30 +18,17 @@ export default async function handler(req, res) {
   }
 }
 
-// ========================================================================
-// MAIN FLOW
-// ========================================================================
-
 async function processRequest(request) {
   const gh = githubClient();
   const owner = process.env.GH_OWNER;
   const repo = repoNameFromTask(request.task);
-
-  // Create or reuse repository
   const repoData = await ensureRepo(gh, owner, repo);
-
-  // Generate files based on brief
   const generated = await generateFromBrief(request);
-
-  // Commit LICENSE, README, and files
   await writeFile(gh, owner, repo, "LICENSE", mitLicenseText(), "add LICENSE");
   await writeFile(gh, owner, repo, "README.md", generated.readme, "add README.md");
-
   for (const [path, content] of Object.entries(generated.files)) {
     await writeFile(gh, owner, repo, path, content, `add ${path}`);
   }
-
-  // Handle attachments
   if (Array.isArray(request.attachments)) {
     for (const a of request.attachments) {
       const { name, url } = a || {};
@@ -56,14 +37,8 @@ async function processRequest(request) {
       await writeFile(gh, owner, repo, `attachments/${name}`, base64, `add attachment ${name}`, true);
     }
   }
-
-  // Enable GitHub Pages
   const pagesUrl = await enablePages(gh, owner, repo, "main");
-
-  // Get latest commit SHA
   const sha = await getLatestCommitSha(gh, owner, repo, "main");
-
-  // POST to evaluation_url
   await postWithRetry(request.evaluation_url, {
     email: request.email,
     task: request.task,
@@ -74,10 +49,6 @@ async function processRequest(request) {
     pages_url: pagesUrl
   });
 }
-
-// ========================================================================
-// HELPERS
-// ========================================================================
 
 async function readJson(req) {
   const chunks = [];
@@ -92,9 +63,7 @@ function githubClient() {
     Accept: "application/vnd.github+json",
     "Content-Type": "application/json"
   };
-
   const base = "https://api.github.com";
-
   async function request(url, options = {}) {
     const res = await fetch(base + url, { ...options, headers });
     const text = await res.text();
@@ -107,7 +76,6 @@ function githubClient() {
     if (!res.ok) throw new Error(`GitHub ${res.status}: ${text}`);
     return json;
   }
-
   return { request };
 }
 
@@ -185,31 +153,38 @@ function parseDataUri(uri) {
 function mitLicenseText() {
   const year = new Date().getUTCFullYear();
   const owner = process.env.GH_OWNER || "Student";
-  return `MIT License\n\nCopyright (c) ${year} ${owner}\n\nPermission is hereby granted...`;
-}
+  return `MIT License
 
-// ========================================================================
-// APP GENERATION LOGIC
-// ========================================================================
+Copyright (c) ${year} ${owner}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.`;
+}
 
 async function generateFromBrief(req) {
   const brief = req.brief.toLowerCase();
-
-  if (brief.includes("captcha-solver")) {
-    return captchaSolverTemplate();
-  } else if (brief.includes("markdown")) {
-    return markdownTemplate();
-  } else if (brief.includes("sales")) {
-    return salesTemplate();
-  } else if (brief.includes("github user")) {
-    return githubUserTemplate();
-  }
-
-  // fallback
+  if (brief.includes("captcha-solver")) return captchaSolverTemplate(req.round);
+  if (brief.includes("markdown")) return markdownTemplate(req.round);
+  if (brief.includes("sales")) return salesTemplate(req.round, req.task);
+  if (brief.includes("github user")) return githubUserTemplate(req.round, req.task);
   return basicTemplate(req.brief);
 }
 
-// ---- Templates ----
 function captchaSolverTemplate() {
   return {
     readme: "# Captcha Solver\n\nDisplays image from ?url=... and uses Tesseract.js to extract text.",
@@ -220,34 +195,66 @@ function captchaSolverTemplate() {
   };
 }
 
-function markdownTemplate() {
-  return {
-    readme: "# Markdown to HTML\n\nConverts attached input.md into rendered HTML using marked and highlight.js.",
-    files: {
-      "index.html": `<!doctype html><html><head><meta charset="utf-8"><title>Markdown</title><script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script><script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script></head><body><div id="markdown-output"></div><script src="script.js"></script></body></html>`,
-      "script.js": `async function load(){const t=await (await fetch('attachments/input.md')).text();document.getElementById('markdown-output').innerHTML=marked.parse(t);hljs.highlightAll();}load();`
-    }
-  };
+function markdownTemplate(round) {
+  if (round === 1) {
+    return {
+      readme: "# Markdown to HTML\n\nConverts attached input.md into rendered HTML using marked and highlight.js.",
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><title>Markdown</title><script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script><script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script></head><body><div id="markdown-output"></div><script src="script.js"></script></body></html>`,
+        "script.js": `async function load(){const t=await (await fetch('attachments/input.md')).text();document.getElementById('markdown-output').innerHTML=marked.parse(t);hljs.highlightAll();}load();`
+      }
+    };
+  } else {
+    return {
+      readme: "# Markdown to HTML Round 2\n\nAdds tabs, source label, and word count.",
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset='utf-8'><title>Markdown to HTML</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css'></head><body class='p-4'><div id='markdown-tabs'><button id='tab-html'>HTML</button><button id='tab-md'>Markdown</button></div><div id='markdown-source-label'></div><div id='markdown-output'></div><pre id='markdown-source'></pre><span id='markdown-word-count'></span><script src='https://cdn.jsdelivr.net/npm/marked/marked.min.js'></script><script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'></script><script src='script.js'></script></body></html>`,
+        "script.js": `async function main(){const md=await (await fetch('attachments/input.md')).text();const html=marked.parse(md,{highlight:c=>hljs.highlightAuto(c).value});const out=document.querySelector('#markdown-output');const src=document.querySelector('#markdown-source');out.innerHTML=html;src.textContent=md;document.querySelector('#markdown-source-label').textContent='Attachment: input.md';document.querySelector('#tab-html').onclick=()=>{out.style.display='block';src.style.display='none';};document.querySelector('#tab-md').onclick=()=>{out.style.display='none';src.style.display='block';};const count=md.trim().split(/\\s+/).length;document.querySelector('#markdown-word-count').textContent=new Intl.NumberFormat().format(count)+' words';}main();`
+      }
+    };
+  }
 }
 
-function salesTemplate() {
-  return {
-    readme: "# Sum of Sales\n\nFetches data.csv, sums its sales column, and displays the total.",
-    files: {
-      "index.html": `<!doctype html><html><head><meta charset="utf-8"><title>Sales Summary</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css"></head><body><h1 id="title">Sales Summary</h1><div>Total: <span id="total-sales">0</span></div><script src="script.js"></script></body></html>`,
-      "script.js": `async function load(){const csv=await (await fetch('attachments/data.csv')).text();const rows=csv.trim().split(/\\n/).map(r=>r.split(','));const hdr=rows.shift();const i=hdr.indexOf('sales');const total=rows.reduce((s,r)=>s+parseFloat(r[i]||0),0);document.getElementById('total-sales').textContent=total.toFixed(2);}load();`
-    }
-  };
+function salesTemplate(round, task) {
+  const seed = task.split("-").pop();
+  if (round === 1) {
+    return {
+      readme: "# Sum of Sales\n\nFetches data.csv, sums its sales column, and displays the total.",
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><title>Sales Summary ${seed}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css"></head><body><h1>Sales Summary ${seed}</h1><div>Total: <span id="total-sales">0</span></div><script src="script.js"></script></body></html>`,
+        "script.js": `async function load(){const csv=await (await fetch('attachments/data.csv')).text();const rows=csv.trim().split(/\\n/).map(r=>r.split(','));const hdr=rows.shift();const i=hdr.indexOf('sales');const total=rows.reduce((s,r)=>s+parseFloat(r[i]||0),0);document.getElementById('total-sales').textContent=total.toFixed(2);}load();`
+      }
+    };
+  } else {
+    return {
+      readme: "# Sum of Sales Round 2\n\nAdds table and currency picker.",
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8"><title>Sales Summary ${seed}</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css"></head><body class='p-4'><h1>Sales Summary ${seed}</h1><select id='currency-picker'><option value='USD'>USD</option></select><div>Total: <span id='total-sales'>0</span> <span id='total-currency'></span></div><table id='product-sales' class='table'><tbody></tbody></table><script src='script.js'></script></body></html>`,
+        "script.js": `async function main(){const csv=await (await fetch('attachments/data.csv')).text();const rows=csv.trim().split(/\\n/).map(r=>r.split(','));const hdr=rows.shift();const iS=hdr.indexOf('sales');const iP=hdr.indexOf('product');const tbody=document.querySelector('#product-sales tbody');let total=0;for(const r of rows){const tr=document.createElement('tr');tr.innerHTML=\`<td>\${r[iP]}</td><td>\${r[iS]}</td>\`;tbody.appendChild(tr);total+=parseFloat(r[iS]||0);}document.querySelector('#total-sales').textContent=total.toFixed(2);}main();`
+      }
+    };
+  }
 }
 
-function githubUserTemplate() {
-  return {
-    readme: "# GitHub User Created\n\nFetches GitHub username and shows account creation date.",
-    files: {
-      "index.html": `<!doctype html><html><head><meta charset="utf-8"><title>GitHub User</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css"></head><body><form id="form"><input name="user" placeholder="octocat"><button>Lookup</button></form><div id="github-created-at"></div><script src="script.js"></script></body></html>`,
-      "script.js": `document.getElementById('form').addEventListener('submit',async e=>{e.preventDefault();const u=new FormData(e.target).get('user');const r=await fetch('https://api.github.com/users/'+u);const j=await r.json();document.getElementById('github-created-at').textContent=new Date(j.created_at).toISOString().slice(0,10);});`
-    }
-  };
+function githubUserTemplate(round, task) {
+  const seed = task.split("-").pop();
+  if (round === 1) {
+    return {
+      readme: "# GitHub User Created\n\nFetches GitHub username and shows account creation date.",
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset='utf-8'><title>GitHub User</title><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css'></head><body class='p-4'><form id='github-user-${seed}'><input id='username' class='form-control mb-2' placeholder='GitHub username'><button class='btn btn-primary'>Check</button></form><div>Created At: <span id='github-created-at'></span></div><script src='script.js'></script></body></html>`,
+        "script.js": `document.querySelector('form').onsubmit=async e=>{e.preventDefault();const u=username.value.trim();const r=await fetch('https://api.github.com/users/'+u);const d=await r.json();if(d.created_at){github_created_at.textContent=new Date(d.created_at).toISOString().slice(0,10);}else{github_created_at.textContent='Not found';}};`
+      }
+    };
+  } else {
+    return {
+      readme: "# GitHub User Created Round 2\n\nAdds aria-live, age, and caching.",
+      files: {
+        "index.html": `<!doctype html><html><head><meta charset='utf-8'><title>GitHub User</title><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css'></head><body class='p-4'><form id='github-user-${seed}'><input id='username' class='form-control mb-2'><button class='btn btn-primary'>Check</button></form><div id='github-status' aria-live='polite'></div><div>Created At: <span id='github-created-at'></span> <span id='github-account-age'></span></div><script src='script.js'></script></body></html>`,
+        "script.js": `const key='github-user-${seed}';const saved=localStorage.getItem(key);if(saved)username.value=saved;document.querySelector('form').onsubmit=async e=>{e.preventDefault();const user=username.value.trim();if(!user)return;github_status.textContent='Looking up...';const r=await fetch('https://api.github.com/users/'+user);const d=await r.json();if(d.created_at){github_status.textContent='Found user!';const date=new Date(d.created_at);github_created_at.textContent=date.toISOString().slice(0,10);const age=Math.floor((Date.now()-date)/(365*24*60*60*1000));github_account_age.textContent=age+' years';localStorage.setItem(key,user);}else{github_status.textContent='User not found';}};`
+      }
+    };
+  }
 }
 
 function basicTemplate(brief) {
