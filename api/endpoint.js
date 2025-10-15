@@ -3,7 +3,6 @@ export default async function handler(req, res) {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-
   try {
     const body = await readJson(req);
     if (!body.secret || body.secret !== process.env.STUDENT_SECRET) {
@@ -38,6 +37,7 @@ async function processRequest(request) {
     }
   }
   const pagesUrl = await enablePages(gh, owner, repo, "main");
+  await waitForUrl(pagesUrl);
   const sha = await getLatestCommitSha(gh, owner, repo, "main");
   await postWithRetry(request.evaluation_url, {
     email: request.email,
@@ -68,11 +68,7 @@ function githubClient() {
     const res = await fetch(base + url, { ...options, headers });
     const text = await res.text();
     let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = text;
-    }
+    try { json = JSON.parse(text); } catch { json = text; }
     if (!res.ok) throw new Error(`GitHub ${res.status}: ${text}`);
     return json;
   }
@@ -83,15 +79,18 @@ async function ensureRepo(gh, owner, name) {
   try {
     return await gh.request(`/repos/${owner}/${name}`);
   } catch {
-    return await gh.request(`/user/repos`, {
-      method: "POST",
-      body: JSON.stringify({
-        name,
-        private: false,
-        auto_init: true,
-        license_template: "mit"
-      })
-    });
+    const me = await gh.request(`/user`);
+    if (me.login.toLowerCase() === owner.toLowerCase()) {
+      return await gh.request(`/user/repos`, {
+        method: "POST",
+        body: JSON.stringify({ name, private: false, auto_init: true, license_template: "mit" })
+      });
+    } else {
+      return await gh.request(`/orgs/${owner}/repos`, {
+        method: "POST",
+        body: JSON.stringify({ name, private: false, auto_init: true, license_template: "mit" })
+      });
+    }
   }
 }
 
@@ -100,10 +99,16 @@ function repoNameFromTask(task) {
 }
 
 async function writeFile(gh, owner, repo, path, content, message, isBase64 = false) {
-  const base64 = isBase64 ? content : Buffer.from(content).toString("base64");
-  await gh.request(`/repos/${owner}/${repo}/contents/${path}`, {
+  let sha;
+  try {
+    const existing = await gh.request(`/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`);
+    sha = existing.sha;
+  } catch {}
+  const body = { message, content: isBase64 ? content : Buffer.from(content).toString("base64") };
+  if (sha) body.sha = sha;
+  await gh.request(`/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
     method: "PUT",
-    body: JSON.stringify({ message, content: base64 })
+    body: JSON.stringify(body)
   });
 }
 
@@ -127,6 +132,18 @@ async function enablePages(gh, owner, repo, branch) {
   return `https://${owner}.github.io/${repo}/`;
 }
 
+async function waitForUrl(url, timeout = 120000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return true;
+    } catch {}
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return false;
+}
+
 async function postWithRetry(url, body) {
   let delay = 1000;
   for (let i = 0; i < 5; i++) {
@@ -140,7 +157,7 @@ async function postWithRetry(url, body) {
     } catch (e) {
       console.error("Eval post failed:", e);
     }
-    await new Promise((r) => setTimeout(r, delay));
+    await new Promise(r => setTimeout(r, delay));
     delay *= 2;
   }
 }
@@ -260,8 +277,6 @@ function githubUserTemplate(round, task) {
 function basicTemplate(brief) {
   return {
     readme: "# Generic Task App\n\nImplements the provided brief.",
-    files: {
-      "index.html": `<!doctype html><html><body><h1>Task Brief</h1><pre>${brief}</pre></body></html>`
-    }
+    files: { "index.html": `<!doctype html><html><body><h1>Task Brief</h1><pre>${brief}</pre></body></html>` }
   };
 }
