@@ -1,14 +1,3 @@
-// ========================================================================
-// LLM Code Deployment Project
-// EXACT IMPLEMENTATION per official problem statement
-// Compatible with Vercel or Render
-// ========================================================================
-
-// Environment variables required:
-// - STUDENT_SECRET : must match what you submitted in the Google Form
-// - GH_TOKEN        : GitHub Personal Access Token (repo + pages scopes)
-// - GH_OWNER        : your GitHub username or org
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
